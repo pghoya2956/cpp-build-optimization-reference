@@ -1,0 +1,40 @@
+# gpu-verify-job.yaml — run the CUDA kernels on a real GPU and check them.
+#
+# CI only proves the kernels *compile* (nvcc on a CPU runner). This one-shot Job
+# proves they *run*: it executes ./cbor on a GPU node, where main.cpp runs every
+# kernel on the device and compares the result against the CPU reference. A
+# mismatch makes ./cbor exit non-zero, which fails the Job.
+#
+# The node is selected by the generic `nvidia.com/gpu.present` label that the
+# NVIDIA device plugin sets — no cluster-specific node name or IP is hard-coded.
+#
+#   kubectl apply  -f deploy/gpu-verify-job.yaml
+#   kubectl wait --for=condition=complete --timeout=300s job/cbor-gpu-verify
+#   kubectl logs job/cbor-gpu-verify
+#   kubectl delete job cbor-gpu-verify        # release the GPU
+#
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cbor-gpu-verify
+  labels:
+    app: cbor-gpu-verify
+spec:
+  backoffLimit: 0                 # a failed kernel check should not be retried
+  ttlSecondsAfterFinished: 300    # auto-clean 5 min after finishing
+  template:
+    metadata:
+      labels:
+        app: cbor-gpu-verify
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+        - name: cbor
+          # Built and pushed by the build-benchmark workflow (linux/amd64).
+          image: ghcr.io/pghoya2956/cpp-build-optimization-reference:gpu-verify
+          imagePullPolicy: Always
+          resources:
+            limits:
+              nvidia.com/gpu: 1

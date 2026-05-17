@@ -1,0 +1,18 @@
+# Build trees (one per preset)
+/build/
+build-*/
+
+# Compiler / cache artifacts
+*.o
+*.obj
+*.dwo
+.ccache/
+.cache/
+sccache/
+
+# Benchmark output
+bench/results/
+
+# Editor / OS noise
+.DS_Store
+compile_commands.json

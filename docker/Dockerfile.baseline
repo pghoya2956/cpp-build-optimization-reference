@@ -1,0 +1,24 @@
+#
+# Dockerfile.baseline — the deliberately UNoptimized image. Measurement "before".
+#
+# Anti-patterns are intentional here; docker/Dockerfile.optimized fixes each one:
+#   - source COPYd before dependencies -> any source edit busts the apt layer
+#   - single stage on cuda:*-devel      -> the ~3.5GB dev toolchain ships to prod
+#   - no compiler cache, no BuildKit cache mounts
+#   - apt recommends & lists left in place -> extra image bloat
+#
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /workspace
+
+# Anti-pattern: copy the whole context first. Any source change invalidates the
+# apt layer below, so the toolchain reinstalls on every commit.
+COPY . /workspace
+
+RUN apt-get update && apt-get install -y build-essential cmake
+
+RUN cmake --preset baseline \
+ && cmake --build build/baseline --parallel "$(nproc)"
+
+CMD ["./build/baseline/cbor"]

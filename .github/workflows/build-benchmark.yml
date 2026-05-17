@@ -1,0 +1,90 @@
+name: build-benchmark
+
+# The full baseline-vs-optimized benchmark. Manual only — it builds four heavy
+# images, so it is not run on every push (a push gets the lighter publish-image
+# workflow instead, which doubles as the compile gate).
+on:
+  workflow_dispatch:
+
+jobs:
+  # One job per variant; each job measures cold then warm. max-parallel: 1 so
+  # the two variant jobs never compete for the runner and skew the numbers.
+  benchmark:
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1
+      matrix:
+        variant: [baseline, optimized]
+    steps:
+      - uses: actions/checkout@v4
+
+      # docker-container driver: a builder that persists across the cold and
+      # warm builds in this job, so the warm build sees the cold build's cache.
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Cold build (no cache)
+        id: cold
+        run: |
+          docker buildx prune -af >/dev/null 2>&1 || true
+          S=$(date +%s)
+          docker buildx build --load --no-cache --progress=plain \
+            -f "docker/Dockerfile.${{ matrix.variant }}" \
+            -t "cbor:${{ matrix.variant }}" . 2>&1 | tee cold.log
+          echo "seconds=$(( $(date +%s) - S ))" >> "$GITHUB_OUTPUT"
+
+      # Warm build: edit one source file, rebuild. This is the realistic
+      # "I changed a line and rebuilt" case — for baseline it busts everything,
+      # for optimized only the source layer (deps + ccache stay warm).
+      - name: Warm build (one source file changed)
+        id: warm
+        run: |
+          echo "// benchmark rebuild $(date +%s)" >> src/main.cpp
+          S=$(date +%s)
+          docker buildx build --load --progress=plain \
+            -f "docker/Dockerfile.${{ matrix.variant }}" \
+            -t "cbor:${{ matrix.variant }}" . 2>&1 | tee warm.log
+          echo "seconds=$(( $(date +%s) - S ))" >> "$GITHUB_OUTPUT"
+
+      - name: Record result
+        run: |
+          SIZE=$(docker image inspect "cbor:${{ matrix.variant }}" \
+                   --format '{{.Size}}' | awk '{printf "%.2f", $1/1e9}')
+          mkdir -p results
+          printf 'variant=%s cold=%s warm=%s image_gb=%s\n' \
+            "${{ matrix.variant }}" \
+            "${{ steps.cold.outputs.seconds }}" \
+            "${{ steps.warm.outputs.seconds }}" \
+            "$SIZE" > "results/${{ matrix.variant }}.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.variant }}
+          path: results/${{ matrix.variant }}.txt
+
+  # Combine the per-variant numbers into one table in the job summary.
+  compare:
+    needs: benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: results
+          merge-multiple: true
+      - name: Write benchmark table to the job summary
+        run: |
+          {
+            echo "## build-benchmark — baseline vs optimized"
+            echo ""
+            echo "Runner: \`ubuntu-latest\` (GitHub-hosted). Single measurement"
+            echo "per cell — CI is the regression signal; the README headline"
+            echo "numbers are local 3-run medians (see README)."
+            echo ""
+            echo "| variant | cold build | warm build | image size |"
+            echo "|---|---|---|---|"
+            for f in results/baseline.txt results/optimized.txt; do
+              [ -f "$f" ] || continue
+              # shellcheck disable=SC2046
+              eval $(cat "$f")
+              echo "| $variant | ${cold}s | ${warm}s | ${image_gb} GB |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

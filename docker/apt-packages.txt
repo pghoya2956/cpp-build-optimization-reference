@@ -1,0 +1,11 @@
+# Build dependencies for the optimized image.
+#
+# This file is COPYd and installed *before* the source is COPYd, so editing
+# source never invalidates the apt layer (layer-A: dependency manifest first).
+# It mirrors how ROS Navigation2's Dockerfile copies package.xml manifests
+# before the source tree — see docs/reference-analysis.md.
+build-essential
+cmake
+ninja-build
+ccache
+mold

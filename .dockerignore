@@ -1,0 +1,11 @@
+# Shrinking the build context is itself a layer-A optimization: anything not
+# needed to compile is kept out of the bytes shipped to the BuildKit daemon.
+build/
+build-*/
+.git/
+.github/
+docs/
+deploy/
+bench/results/
+*.md
+.DS_Store

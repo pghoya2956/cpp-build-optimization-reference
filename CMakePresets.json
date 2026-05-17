@@ -1,0 +1,40 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "baseline",
+      "displayName": "baseline — no build optimizations",
+      "description": "Unix Makefiles, no compiler cache, GNU ld, unity & PCH off. The measurement 'before'.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/baseline",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_UNITY_BUILD": "OFF",
+        "CMAKE_DISABLE_PRECOMPILE_HEADERS": "ON"
+      }
+    },
+    {
+      "name": "optimized",
+      "displayName": "optimized — full layer-B build stack",
+      "description": "Ninja + ccache + split-DWARF + unity + PCH + job pools. The measurement 'after'. (mold is applied at build time via `mold -run`; see docker/Dockerfile.optimized.)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/optimized",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "ccache",
+        "CMAKE_CUDA_COMPILER_LAUNCHER": "ccache",
+        "CMAKE_CXX_FLAGS": "-gsplit-dwarf",
+        "CMAKE_UNITY_BUILD": "ON",
+        "CMAKE_UNITY_BUILD_BATCH_SIZE": "16",
+        "CMAKE_DISABLE_PRECOMPILE_HEADERS": "OFF",
+        "CMAKE_JOB_POOLS": "link_pool=2",
+        "CMAKE_JOB_POOL_LINK": "link_pool"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "baseline", "configurePreset": "baseline" },
+    { "name": "optimized", "configurePreset": "optimized" }
+  ]
+}
