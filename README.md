@@ -24,7 +24,7 @@ A는 "명령 재실행을 피함", B는 "컴파일 자체를 빠르게", C는 "�
 ## 측정 결과
 
 로컬 측정 — Apple Silicon (10-core, arm64), Docker Desktop VM 16.7 GB,
-`nvidia/cuda:12.4.1`, 3회 중앙값. CI(GitHub Actions) 측정은 `build-benchmark`
+`nvidia/cuda:12.2.2`, 3회 중앙값. CI(GitHub Actions) 측정은 `build-benchmark`
 워크플로의 job summary 참조.
 
 | variant | 콜드 빌드 | 웜 빌드 (소스 1줄 변경) | 최종 이미지 |

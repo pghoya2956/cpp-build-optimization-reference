@@ -7,7 +7,7 @@
 #   - no compiler cache, no BuildKit cache mounts
 #   - apt recommends & lists left in place -> extra image bloat
 #
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /workspace
