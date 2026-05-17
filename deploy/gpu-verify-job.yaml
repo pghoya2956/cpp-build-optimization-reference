@@ -28,6 +28,12 @@ spec:
         app: cbor-gpu-verify
     spec:
       restartPolicy: Never
+      # Opt into the NVIDIA container runtime. Clusters that wire up GPUs with
+      # the nvidia-container-toolkit / GPU Operator expose it as a RuntimeClass
+      # named "nvidia". Without this the device plugin still reserves a GPU
+      # slot, but the driver is never injected into the container — ./cbor then
+      # sees no device and falls back to the CPU-only path.
+      runtimeClassName: nvidia
       nodeSelector:
         nvidia.com/gpu.present: "true"
       containers:
