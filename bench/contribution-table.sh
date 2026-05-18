@@ -53,32 +53,36 @@ for c in A0 A1 A2 A3 A4 A5 A6 B1 B2 B3 B4 B5 B6; do
 done
 echo
 
-echo "### 프로토콜 A — 한계 기여 (누적 add, warm layer B 기준)"
+echo "### 프로토콜 A — 한계 기여 (누적 add)"
 echo
-echo "각 단계에서 기법을 하나 추가했을 때 줄어든 warm layer B 시간. 양수 = 단축."
+echo "각 단계에서 기법을 하나 추가했을 때 줄어든 layer B 시간(Δ, 양수=단축). cold = 전체"
+echo "재컴파일, warm = 1줄 수정 재빌드. 기법마다 효과가 나타나는 구간이 다르므로 두 구간을"
+echo "함께 본다 — ccache는 warm, unity·PCH는 cold에서 발현. warm Δ의 한 자릿수 값은 측정"
+echo "노이즈 범위(코어 ablation 표의 ⚠ 참조)."
 echo
-echo "| 추가 기법 | cell | warm L_B | 한계 기여 Δ |"
-echo "|---|---|--:|--:|"
-prev="$(field A0 warm_layer_b)"
+echo "| 추가 기법 | cell | cold L_B | cold Δ | warm L_B | warm Δ |"
+echo "|---|---|--:|--:|--:|--:|"
+prev_c="$(field A0 cold_layer_b)"; prev_w="$(field A0 warm_layer_b)"
 for pair in "Ninja:A1" "ccache:A2" "PCH:A3" "unity:A4" "split-dwarf:A5" "mold:A6"; do
   tech="${pair%%:*}"; c="${pair##*:}"
-  cur="$(field "$c" warm_layer_b)"
-  echo "| +$tech | $c | $cur | $(delta "$prev" "$cur") |"
-  prev="$cur"
+  cc="$(field "$c" cold_layer_b)"; cw="$(field "$c" warm_layer_b)"
+  echo "| +$tech | $c | $cc | $(delta "$prev_c" "$cc") | $cw | $(delta "$prev_w" "$cw") |"
+  prev_c="$cc"; prev_w="$cw"
 done
 echo
 
 echo "### 프로토콜 B — 잔여 기여 (leave-one-out, optimized 대비)"
 echo
-echo "optimized(=A6)에서 기법을 하나 제거했을 때 늘어난 warm layer B 시간. 양수 = 그 기법이 없으면 느려짐."
+echo "optimized(=A6)에서 기법을 하나 제거했을 때 늘어난 layer B 시간(Δ, 양수=느려짐)."
+echo "프로토콜 A의 한계 기여와 괴리가 큰 기법 = 다른 기법과 상호작용이 큰 기법."
 echo
-echo "| 제거 기법 | cell | warm L_B | 잔여 기여 Δ |"
-echo "|---|---|--:|--:|"
-b0="$(field A6 warm_layer_b)"
+echo "| 제거 기법 | cell | cold L_B | cold Δ | warm L_B | warm Δ |"
+echo "|---|---|--:|--:|--:|--:|"
+b0c="$(field A6 cold_layer_b)"; b0w="$(field A6 warm_layer_b)"
 for pair in "ccache:B1" "unity:B2" "PCH:B3" "mold:B4" "split-dwarf:B5" "Ninja:B6"; do
   tech="${pair%%:*}"; c="${pair##*:}"
-  cur="$(field "$c" warm_layer_b)"
-  echo "| -$tech | $c | $cur | $(delta "$cur" "$b0") |"
+  cc="$(field "$c" cold_layer_b)"; cw="$(field "$c" warm_layer_b)"
+  echo "| -$tech | $c | $cc | $(delta "$cc" "$b0c") | $cw | $(delta "$cw" "$b0w") |"
 done
 echo
 
