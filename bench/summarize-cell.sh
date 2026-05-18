@@ -40,13 +40,13 @@ done
 med() {
   local phase="$1" key="$2" r v nums=""
   for r in $(seq 1 "$RUNS"); do
-    v="$("$PARSE" "bench/results/${CELL}-run${r}-${phase}.log" \
+    v="$(bash "$PARSE" "bench/results/${CELL}-run${r}-${phase}.log" \
           | awk -F= -v k="$key" '$1 == k { print $2 }')"
     [ -n "$v" ] && [ "$v" != "NA" ] && nums="$nums $v"
   done
   [ -n "${nums// /}" ] || { echo "NA NA NA"; return; }
   # shellcheck disable=SC2086
-  "$PARSE" --stats $nums | awk '{
+  bash "$PARSE" --stats $nums | awk '{
     for (i = 1; i <= NF; i++) { split($i, kv, "="); m[kv[1]] = kv[2] }
     print m["median"], m["min"], m["max"]
   }'
@@ -102,3 +102,12 @@ fi
 
 echo "wrote $out"
 cat "$out"
+
+# Fail loud on an empty measurement. The build always emits a LAYER_B marker,
+# so an NA layer_b means the parse step failed — not a legitimate empty result.
+# Without this guard a parse failure passes as a green job with NA-filled data.
+if [ "$MODE" = "full" ]; then
+  [ "$cb" != "NA" ] || { echo "FATAL: $CELL cold_layer_b is NA — parse/measurement failed" >&2; exit 1; }
+else
+  [ "$fb" != "NA" ] || { echo "FATAL: $CELL fresh_layer_b is NA — parse/measurement failed" >&2; exit 1; }
+fi
