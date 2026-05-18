@@ -25,10 +25,6 @@ if [ -s /run/secrets/gha_env ]; then
   . /run/secrets/gha_env
   set +a
   export SCCACHE_GHA_ENABLED="on"
-  # DIAGNOSTIC — surface the sccache server log so cache write errors stay
-  # visible while the gha backend is being stabilised.
-  export SCCACHE_LOG="debug"
-  export SCCACHE_ERROR_LOG="/tmp/sccache-server.log"
 fi
 
 # --- configure -------------------------------------------------------------
@@ -88,14 +84,5 @@ fi
 # --- compiler-cache stats --------------------------------------------------
 case "${ABL_CXX_LAUNCHER:-}" in
   ccache)  ccache --show-stats ;;
-  sccache)
-    sccache --show-stats
-    # DIAGNOSTIC — dump the sccache server log (cache write error detail).
-    if [ -f /tmp/sccache-server.log ]; then
-      echo "=== sccache server log (diag) ==="
-      grep -iE 'error|warn|fail|gha|ghac|reserve|finaliz|http|status|blob|results|cache' \
-        /tmp/sccache-server.log | tail -90 || true
-      echo "=== sccache server log end ==="
-    fi
-    ;;
+  sccache) sccache --show-stats ;;
 esac
