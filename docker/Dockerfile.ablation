@@ -21,7 +21,7 @@ WORKDIR /workspace
 # COPYd before the source, so a source edit never busts this layer. apt is
 # served from a BuildKit cache mount. This whole RUN is the layer-A measurement
 # boundary — one step, parsed from the buildx '#N DONE' timestamp.
-ARG SCCACHE_VERSION=0.10.0
+ARG SCCACHE_VERSION=0.15.0
 COPY docker/apt-packages-ablation.txt /tmp/apt-packages.txt
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
