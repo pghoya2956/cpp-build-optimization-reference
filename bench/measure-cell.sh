@@ -15,8 +15,9 @@
 #                     multi-target measurement.
 #   fresh           — one build on a clean checkout, no prune, no warm edit.
 #                     Represents a brand-new runner: the local ccache is empty,
-#                     so only a shared remote cache (sccache+S3) can serve it.
-#                     The ephemeral-runner cache-sharing data point.
+#                     so only a shared remote cache (sccache + GitHub Actions
+#                     cache) can serve it. The ephemeral-runner cache-sharing
+#                     data point.
 #
 # The sccache cell (backend=gha in cells.tsv) additionally needs the GitHub
 # Actions cache token + URL in the environment: ACTIONS_RUNTIME_TOKEN and
@@ -119,7 +120,8 @@ case "$MODE" in
     ;;
   fresh)
     # fresh-runner build — the local ccache starts empty, so only a shared
-    # remote cache (sccache+S3) can serve this. BuildKit layers are cold too.
+    # remote cache (sccache's GitHub Actions cache) can serve this. BuildKit
+    # layers are cold too.
     run_build "${OUT}-fresh.log" FRESH_BUILD_SECONDS --no-cache
     size_log="${OUT}-fresh.log"
     ;;

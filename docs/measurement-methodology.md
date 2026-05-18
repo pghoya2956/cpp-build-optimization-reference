@@ -47,8 +47,8 @@
 
 | 변형 | 토글 키 | 측정 목적 |
 |------|---------|-----------|
-| 다중 링크 타깃 | `CBOR_SPLIT_LIBS` (ON ↔ OFF — CMake `option`) | mold 기여도의 링크 타깃 수 의존성 측정 |
-| 컴파일 캐시 백엔드 | ccache(로컬) ↔ sccache + S3 | ephemeral 러너 간 캐시 공유 여부 측정 |
+| 다중 링크 타깃 | `CBOR_SPLIT_LIBS` (`none` ↔ `static` ↔ `shared` — CMake STRING 캐시변수) | mold 기여도의 링크 타깃 수 의존성 측정 |
+| 컴파일 캐시 백엔드 | ccache(로컬 디스크) ↔ sccache + GitHub Actions 캐시(공유 원격) | ephemeral 러너 간 캐시 공유 여부 측정 |
 
 ### 종속변수 — 측정하는 것
 
@@ -59,7 +59,7 @@
 | layer C 시간 | 초 | 최종 이미지 export buildx step 구간 |
 | `docker build` 전체 wall time | 초 | buildx 호출 전체 (참고용 — 헤드라인으로 쓰지 않음) |
 | ccache 적중률 | % (hits/cacheable) | `ccache -z` → 빌드 → `--show-stats` |
-| sccache 적중률 + S3 read/write 카운트 | %, 회 | `sccache --zero-stats` → 빌드 → `--show-stats` |
+| sccache 적중률 + 캐시 read/write 카운트 | %, 회 | `sccache --zero-stats` → 빌드 → `--show-stats` |
 | 최종 이미지 크기 | GB | `docker image inspect` |
 
 ### 통제변수 — 고정하는 것
@@ -75,7 +75,7 @@
 | job pools | layer B ablation 시 `link_pool=2`로 *고정*(독립변수에서 제외) | 무제한 병렬 링크는 OOM 위험·노이즈원 |
 | 잡 직렬화 | matrix `max-parallel: 1` | 동시 실행 부하로 인한 흔들림 제거 |
 | 측정 경계 | 각 종속변수별 명시적 마커로 시작/끝 고정 | checkout·러너 setup·캐시 restore를 측정에서 배제 |
-| S3 백엔드 | sccache 측정 회기 시작~종료 동안 S3 엔드포인트·백엔드 불변 | 백엔드 변경이 측정을 오염시키지 않도록 |
+| 캐시 백엔드 | sccache 측정 회기 시작~종료 동안 캐시 백엔드(GitHub Actions 캐시) 불변 | 백엔드 변경이 측정을 오염시키지 않도록 |
 
 `CMAKE_JOB_POOLS`(링크 동시성 제한)는 시간 단축 *기법*이 아니라 OOM 방지·노이즈 통제
 장치이므로 독립변수에서 제외하고 layer B 측정 전 구간 `link_pool=2`로 고정합니다.
@@ -89,7 +89,7 @@
 | split-dwarf ↔ mold | split-dwarf가 링크 입력 크기를 줄임 → mold의 절대 기여가 더 작아짐 | mold 측정 시 split-dwarf 상태를 명시. cold 첫 측정은 둘 다 off 기준에서 각각 단독 측정 |
 | ccache cold/warm 상태 | ccache는 cold에서 0% 적중(저장만), warm에서만 효과 | ccache 기여도는 **warm 빌드에서만** 의미. cold ablation 표와 warm ablation 표를 분리 |
 | 러너 인스턴스 변동 | GitHub-hosted 러너는 잡마다 다른 물리 머신일 수 있음 | 회차 측정 + 중앙값·분산(min/max) 보고로 흡수. 한 잡 안에서 cold→warm을 연속 측정해 같은 머신 공유. 단 — sccache 측정에서는 이 "러너 변동"이 *측정 대상* |
-| sccache S3 왕복 ↔ 적중 | sccache는 적중해도 S3에서 오브젝트를 내려받음 → 같은 잡 안 warm에서는 로컬 ccache보다 느릴 수 있음 | sccache vs ccache 비교는 "어느 캐시가 빠른가"가 아님. *ephemeral 러너 간 공유*가 종속변수. 측정 셀을 "같은 러너 재빌드"와 "새 러너 재빌드"로 분리 |
+| sccache 원격 왕복 ↔ 적중 | sccache는 적중해도 원격 캐시에서 오브젝트를 내려받음 → 같은 잡 안 warm에서는 로컬 ccache보다 느릴 수 있음 | sccache vs ccache 비교는 "어느 캐시가 빠른가"가 아님. *ephemeral 러너 간 공유*가 종속변수. 측정 셀을 "같은 러너 재빌드"와 "새 러너 재빌드"로 분리 |
 
 ## 측정 구간 격리 — layer A / B / C
 
@@ -196,8 +196,8 @@ cmake --preset baseline \
   셀 ID를 받아 해당 `-D` 세트를 적용합니다.
 - mold는 CMake 변수가 아니라 `mold -run` 래핑이므로 빌드 명령 레벨에서 토글합니다(셀
   정의의 `mold` 컬럼).
-- 다중타깃은 `-D CBOR_SPLIT_LIBS=ON`, sccache는 `-D CMAKE_CXX_COMPILER_LAUNCHER=sccache`
-  + sccache 환경변수로 토글합니다.
+- 다중타깃은 `-D CBOR_SPLIT_LIBS=static` 또는 `=shared`, sccache는
+  `-D CMAKE_CXX_COMPILER_LAUNCHER=sccache` + sccache 환경변수로 토글합니다.
 - 기존 `baseline`/`optimized` 프리셋은 양 끝점(A0, B0=A6) 검증용으로 유지합니다 — `-D`
   오버라이드 조합이 프리셋과 동치인지 sanity check합니다.
 
@@ -206,9 +206,9 @@ cmake --preset baseline \
 
 ### 측정 매트릭스 분리 — 셀 곱집합 폭증 방지
 
-변형 축이 둘(다중타깃·캐시 백엔드) 늘면서 전체 13셀 × 다중타깃 2 × 캐시백엔드 2를
-곱하면 52셀로 폭증합니다. 이를 피하려고 측정을 3개 독립 매트릭스로 나눕니다 — *곱집합이
-아니라 합집합*입니다.
+변형 축이 둘(다중타깃·캐시 백엔드) 늘면서 코어 13셀에 다중타깃 3변형·캐시백엔드를
+곱집합으로 붙이면 셀 수가 폭증합니다. 이를 피하려고 측정을 3개 독립 매트릭스로
+나눕니다 — *곱집합이 아니라 합집합*입니다.
 
 | 매트릭스 | 셀 | 고정 조건 | 측정 목적 |
 |----------|-----|-----------|-----------|
@@ -308,15 +308,15 @@ ccache보다 느릴 수 있습니다. 측정 셀을 두 가지 warm으로 나눕
 |------|------|------|
 | 회차 | 각 셀 **N=3회 이상** 측정, 중앙값 보고 + 분산(min/max) 병기 | 단발 측정은 러너 노이즈를 측정값으로 오인 |
 | cold 청결 (ccache) | cold 셀: `docker buildx prune -af` + ccache 캐시 미마운트(또는 `ccache -C`) | BuildKit·ccache 잔류 캐시가 cold를 오염 |
-| cold 청결 (sccache) | cold 셀: 전용 prefix `s3://<bucket>/<cell>/` 삭제 + `docker buildx prune -af` | 원격 버킷 잔류 오브젝트가 sccache cold를 오염 |
+| sccache 새 잡 측정 (fresh) | C2/C3 셀: 새 잡에서 깨끗한 checkout 빌드(`fresh` 모드 — prune·warm edit 없음) | ephemeral 러너 = 로컬 캐시 증발, 공유 원격 캐시만 적중 가능한 상태를 재현 |
 | ccache 통계 경계 | 빌드 직전 `ccache -z`, 직후 `--show-stats` | 해당 빌드만의 적중률 격리 |
-| sccache 통계 경계 | 빌드 직전 `sccache --zero-stats`, 직후 `--show-stats`로 S3 read/write 확인 | 적중률 + S3 권한 정상 여부 격리 |
+| sccache 통계 경계 | 빌드 직전 `sccache --zero-stats`, 직후 `--show-stats`로 캐시 read/write 확인 | 적중률 + 캐시 접근 정상 여부 격리 |
 | cold/warm 정의 (ccache) | cold = 빈 캐시 + BuildKit prune 직후. warm = 같은 셀 cold 직후 같은 빌더에서 1줄 변경 후 재빌드 | 모호한 cold/warm 제거 |
-| cold/warm 정의 (sccache) | cold = 버킷 prefix 빈 상태. warm = 같은 prefix 재사용. 추가로 "새 잡/러너" warm을 별도 측정 | sccache의 cold/warm은 원격 버킷 상태가 가름 |
+| 캐시 백엔드 셀 (C1~C3) | C1 = 같은 잡 warm(ccache 로컬). C2 = 새 잡 warm(ccache 로컬 — 증발). C3 = 새 잡 warm(sccache + GitHub Actions 캐시 — 공유) | "로컬 vs 공유 원격 캐시"의 ephemeral 적중 차이 격리 |
 | 잡 직렬화 | matrix `max-parallel: 1` | 동시 실행 흔들림 제거 |
 | 같은 머신 cold→warm | cold와 warm을 같은 잡·같은 buildx 빌더에서 연속 실행 | warm이 cold의 캐시를 봐야 함. 단 sccache "새 잡" warm 셀은 의도적으로 별 잡에서 실행 |
 | 노이즈 보고 | 분산이 중앙값의 일정 비율(예: >15%)을 넘는 셀은 표에 ⚠ 표기 + 재측정 또는 해석 주의 명기 | 신뢰 못 할 셀을 숨기지 않음 |
-| 측정 환경 캡션 | 러너 사양·CUDA 이미지 태그·`nproc`·측정 회차·중앙값 여부·S3 백엔드를 모든 표에 캡션으로 명기 | 재현 가능성 |
+| 측정 환경 캡션 | 러너 사양·CUDA 이미지 태그·`nproc`·측정 회차·중앙값 여부·캐시 백엔드를 모든 표에 캡션으로 명기 | 재현 가능성 |
 
 ## 합성 워크로드 — 내적/외적 타당도
 
@@ -337,9 +337,11 @@ ccache보다 느릴 수 있습니다. 측정 셀을 두 가지 warm으로 나눕
 ## 런타임 GPU 검증
 
 빌드 측정과 별개로, 산출 이미지가 *런타임에 GPU를 실제로 쓰는지*를 GPU 노드 배포로
-검증합니다(`deploy/gpu-verify-job.yaml`). 검증 Job 로그는 (a) CUDA 디바이스 발견 여부,
-(b) 각 커널이 device에서 실행됐다는 명시적 출력, (c) 디바이스 식별 정보를 명확히 찍어
-"GPU 사용함/안 함"이 한눈에 판정되도록 합니다. GPU 미할당 대조 실행으로 graceful skip
+검증합니다. 검증 Job(`deploy/gpu-verify-job.yaml`) 로그는 (a) CUDA 디바이스 발견 여부
+(디바이스 부재 ↔ 드라이버/런타임 불일치 에러를 *분리*해 출력), (b) 각 커널이 device에서
+실행됐다는 명시적 출력, (c) 디바이스 식별 정보(이름·compute capability·SM 수·메모리·
+드라이버/런타임 버전)를 찍어 "GPU 사용함/안 함"이 한눈에 판정되도록 합니다. 같은 이미지를
+GPU 미할당으로 돌리는 대조 Job(`deploy/cpu-contrast-job.yaml`)으로 graceful CPU-only skip
 경로도 함께 확인합니다.
 
 ## 셀 정의 SSOT
