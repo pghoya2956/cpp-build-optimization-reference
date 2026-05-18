@@ -26,6 +26,10 @@ if [ -s /run/secrets/actions_runtime_token ]; then
   export ACTIONS_RUNTIME_TOKEN="$(cat /run/secrets/actions_runtime_token)"
   export ACTIONS_RESULTS_URL="$(cat /run/secrets/actions_results_url 2>/dev/null || true)"
   export SCCACHE_GHA_ENABLED="on"
+  # DIAGNOSTIC — surface the sccache server log so cache write errors are
+  # visible. The server picks these up at start (before the first sccache call).
+  export SCCACHE_LOG="debug"
+  export SCCACHE_ERROR_LOG="/tmp/sccache-server.log"
 fi
 
 # --- configure -------------------------------------------------------------
@@ -85,5 +89,14 @@ fi
 # --- compiler-cache stats --------------------------------------------------
 case "${ABL_CXX_LAUNCHER:-}" in
   ccache)  ccache --show-stats ;;
-  sccache) sccache --show-stats ;;
+  sccache)
+    sccache --show-stats
+    # DIAGNOSTIC — dump the sccache server log (cache write error detail).
+    if [ -f /tmp/sccache-server.log ]; then
+      echo "=== sccache server log (diag) ==="
+      grep -iE 'error|warn|fail|gha|ghac|reserve|finaliz|http|status|blob|results|cache' \
+        /tmp/sccache-server.log | tail -90 || true
+      echo "=== sccache server log end ==="
+    fi
+    ;;
 esac
