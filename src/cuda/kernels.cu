@@ -90,13 +90,48 @@ double cpu_matmul_checksum(int dim) {
 GpuResult run_gpu_kernels(int n, int dim) {
     GpuResult result;
 
+    // --- device discovery --------------------------------------------------
+    // cudaGetDeviceCount has two failure modes the log must not conflate: a
+    // clean "no device" (status ok, count 0 — a CPU-only run) versus a CUDA
+    // *error* (driver/runtime mismatch — the historic error 804). The previous
+    // code collapsed both into a single "no device" message; here each prints
+    // its own line so the Job log states exactly why the GPU path did not run.
     int device_count = 0;
     cudaError_t status = cudaGetDeviceCount(&device_count);
-    if (status != cudaSuccess || device_count == 0) {
+    if (status != cudaSuccess) {
+        std::printf("[gpu] cudaGetDeviceCount failed: %s (error %d) — "
+                    "a CUDA error, not an absent device; the GPU path "
+                    "could not run\n",
+                    cudaGetErrorString(status), static_cast<int>(status));
+        result.device_available = false;
+        return result;
+    }
+    if (device_count == 0) {
+        std::printf("[gpu] no CUDA device present (cudaGetDeviceCount = 0) — "
+                    "CPU-only run, GPU path skipped\n");
         result.device_available = false;
         return result;
     }
     result.device_available = true;
+
+    // --- device identification ---------------------------------------------
+    int driver_version = 0, runtime_version = 0;
+    cudaDriverGetVersion(&driver_version);
+    cudaRuntimeGetVersion(&runtime_version);
+    std::printf("[gpu] %d CUDA device(s) | driver %d.%d | runtime %d.%d\n",
+                device_count,
+                driver_version / 1000, (driver_version % 1000) / 10,
+                runtime_version / 1000, (runtime_version % 1000) / 10);
+
+    cudaDeviceProp prop;
+    if (cudaGetDeviceProperties(&prop, 0) == cudaSuccess) {
+        std::printf("[gpu] device 0: %s | compute capability %d.%d | "
+                    "%d SMs | %.1f GiB global memory\n",
+                    prop.name, prop.major, prop.minor,
+                    prop.multiProcessorCount,
+                    static_cast<double>(prop.totalGlobalMem)
+                        / (1024.0 * 1024.0 * 1024.0));
+    }
 
     const int threads = 256;
     const int blocks = (n + threads - 1) / threads;
@@ -112,17 +147,23 @@ GpuResult run_gpu_kernels(int n, int dim) {
     CBOR_CUDA_OK(cudaMemcpy(d_a, h_a.data(), n * sizeof(float), cudaMemcpyHostToDevice));
     CBOR_CUDA_OK(cudaMemcpy(d_b, h_b.data(), n * sizeof(float), cudaMemcpyHostToDevice));
 
+    std::printf("[gpu] launching k_vector_add <<<%d blocks, %d threads>>> "
+                "on device 0\n", blocks, threads);
     k_vector_add<<<blocks, threads>>>(d_a, d_b, d_out, n);
     CBOR_CUDA_OK(cudaGetLastError());
     CBOR_CUDA_OK(cudaDeviceSynchronize());
+    std::printf("[gpu] k_vector_add executed on device 0\n");
     CBOR_CUDA_OK(cudaMemcpy(h_out.data(), d_out, n * sizeof(float), cudaMemcpyDeviceToHost));
     result.vector_add_checksum = sum(h_out);
 
     // saxpy: y starts as b, becomes alpha*a + b in place.
     CBOR_CUDA_OK(cudaMemcpy(d_out, h_b.data(), n * sizeof(float), cudaMemcpyHostToDevice));
+    std::printf("[gpu] launching k_saxpy <<<%d blocks, %d threads>>> "
+                "on device 0\n", blocks, threads);
     k_saxpy<<<blocks, threads>>>(kAlpha, d_a, d_out, n);
     CBOR_CUDA_OK(cudaGetLastError());
     CBOR_CUDA_OK(cudaDeviceSynchronize());
+    std::printf("[gpu] k_saxpy executed on device 0\n");
     CBOR_CUDA_OK(cudaMemcpy(h_out.data(), d_out, n * sizeof(float), cudaMemcpyDeviceToHost));
     result.saxpy_checksum = sum(h_out);
 
@@ -143,9 +184,13 @@ GpuResult run_gpu_kernels(int n, int dim) {
 
     dim3 block(16, 16);
     dim3 grid((dim + 15) / 16, (dim + 15) / 16);
+    std::printf("[gpu] launching k_matmul <<<grid %dx%d, block 16x16>>> "
+                "on device 0\n",
+                static_cast<int>(grid.x), static_cast<int>(grid.y));
     k_matmul<<<grid, block>>>(d_ma, d_mb, d_mc, dim);
     CBOR_CUDA_OK(cudaGetLastError());
     CBOR_CUDA_OK(cudaDeviceSynchronize());
+    std::printf("[gpu] k_matmul executed on device 0\n");
     CBOR_CUDA_OK(cudaMemcpy(h_mc.data(), d_mc, dim * dim * sizeof(float), cudaMemcpyDeviceToHost));
     result.matmul_checksum = sum(h_mc);
 

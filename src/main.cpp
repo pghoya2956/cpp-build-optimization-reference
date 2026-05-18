@@ -39,8 +39,9 @@ int main() {
 
     const GpuResult gpu = run_gpu_kernels(n, dim);
     if (!gpu.device_available) {
-        std::cout << "[gpu] skipped: no CUDA device — build verified, "
-                     "run on a GPU node for the runtime check\n";
+        std::cout << "[gpu] GPU path not exercised (see the [gpu] line above "
+                     "for the reason) — build verified; run on a GPU node for "
+                     "the runtime check\n";
         return EXIT_SUCCESS;
     }
 
