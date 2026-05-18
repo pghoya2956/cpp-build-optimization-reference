@@ -1,0 +1,14 @@
+# Toolchain for the ablation measurement image (docker/Dockerfile.ablation).
+#
+# The measurement image must let any cell toggle any technique, so every tool
+# is installed regardless of the cell — ccache, ninja and mold are all present
+# and the cell's flags decide which are actually used. curl/ca-certificates are
+# needed to fetch the sccache release binary (sccache is not in the ubuntu
+# 22.04 archive). This is the measurement superset of docker/apt-packages.txt.
+build-essential
+cmake
+ninja-build
+ccache
+mold
+curl
+ca-certificates

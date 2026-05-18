@@ -1,90 +1,165 @@
 name: build-benchmark
 
-# The full baseline-vs-optimized benchmark. Manual only — it builds four heavy
-# images, so it is not run on every push (a push gets the lighter publish-image
-# workflow instead, which doubles as the compile gate).
+# Full ablation measurement. Heavy — it builds the project many times — so it
+# is manual only. A push gets the lighter publish-image workflow instead, which
+# doubles as the per-push compile gate. See docs/measurement-methodology.md.
 on:
   workflow_dispatch:
+    inputs:
+      runs:
+        description: "Measurement repetitions per cell (N)"
+        default: "3"
+      matrices:
+        description: "Which measurement matrices to run"
+        type: choice
+        options: [all, core, multi, cache]
+        default: all
 
 jobs:
-  # One job per variant; each job measures cold then warm. max-parallel: 1 so
-  # the two variant jobs never compete for the runner and skew the numbers.
-  benchmark:
+  # Resolve the cell lists from bench/cells.tsv (the SSOT) and decide which
+  # matrices run, so the matrices below never duplicate the cell definitions.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      core: ${{ steps.cells.outputs.core }}
+      multi: ${{ steps.cells.outputs.multi }}
+      cache: ${{ steps.cells.outputs.cache }}
+      run_core: ${{ steps.gate.outputs.core }}
+      run_multi: ${{ steps.gate.outputs.multi }}
+      run_cache: ${{ steps.gate.outputs.cache }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: cells
+        name: Resolve cell lists from bench/cells.tsv
+        run: |
+          core=$(awk -F'\t' '$2=="A" || $2=="B" {print $1}' bench/cells.tsv | jq -R . | jq -cs .)
+          multi=$(awk -F'\t' '$2=="M" {print $1}' bench/cells.tsv | jq -R . | jq -cs .)
+          cache=$(awk -F'\t' '$2=="C" {print $1}' bench/cells.tsv | jq -R . | jq -cs .)
+          {
+            echo "core=$core"
+            echo "multi=$multi"
+            echo "cache=$cache"
+          } >> "$GITHUB_OUTPUT"
+      - id: gate
+        name: Decide which matrices run
+        run: |
+          want="${{ inputs.matrices }}"
+          for m in core multi cache; do
+            if [ "$want" = "all" ] || [ "$want" = "$m" ]; then
+              echo "$m=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$m=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+  # Core ablation — protocol A (A0~A6) and protocol B (B1~B6). One job per cell,
+  # max-parallel 1 so the cells never compete for a runner and skew the numbers.
+  core-ablation:
+    needs: plan
+    if: needs.plan.outputs.run_core == 'true'
     runs-on: ubuntu-latest
     strategy:
       max-parallel: 1
+      fail-fast: false
       matrix:
-        variant: [baseline, optimized]
+        cell: ${{ fromJSON(needs.plan.outputs.core) }}
     steps:
       - uses: actions/checkout@v4
-
-      # docker-container driver: a builder that persists across the cold and
-      # warm builds in this job, so the warm build sees the cold build's cache.
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Cold build (no cache)
-        id: cold
-        run: |
-          docker buildx prune -af >/dev/null 2>&1 || true
-          S=$(date +%s)
-          docker buildx build --load --no-cache --progress=plain \
-            -f "docker/Dockerfile.${{ matrix.variant }}" \
-            -t "cbor:${{ matrix.variant }}" . 2>&1 | tee cold.log
-          echo "seconds=$(( $(date +%s) - S ))" >> "$GITHUB_OUTPUT"
-
-      # Warm build: edit one source file, rebuild. This is the realistic
-      # "I changed a line and rebuilt" case — for baseline it busts everything,
-      # for optimized only the source layer (deps + ccache stay warm).
-      - name: Warm build (one source file changed)
-        id: warm
-        run: |
-          echo "// benchmark rebuild $(date +%s)" >> src/main.cpp
-          S=$(date +%s)
-          docker buildx build --load --progress=plain \
-            -f "docker/Dockerfile.${{ matrix.variant }}" \
-            -t "cbor:${{ matrix.variant }}" . 2>&1 | tee warm.log
-          echo "seconds=$(( $(date +%s) - S ))" >> "$GITHUB_OUTPUT"
-
-      - name: Record result
-        run: |
-          SIZE=$(docker image inspect "cbor:${{ matrix.variant }}" \
-                   --format '{{.Size}}' | awk '{printf "%.2f", $1/1e9}')
-          mkdir -p results
-          printf 'variant=%s cold=%s warm=%s image_gb=%s\n' \
-            "${{ matrix.variant }}" \
-            "${{ steps.cold.outputs.seconds }}" \
-            "${{ steps.warm.outputs.seconds }}" \
-            "$SIZE" > "results/${{ matrix.variant }}.txt"
-
+      - name: Measure ${{ matrix.cell }}
+        run: ./bench/summarize-cell.sh "${{ matrix.cell }}" "${{ inputs.runs }}" full
       - uses: actions/upload-artifact@v4
         with:
-          name: bench-${{ matrix.variant }}
-          path: results/${{ matrix.variant }}.txt
+          name: result-${{ matrix.cell }}
+          path: bench/results/${{ matrix.cell }}.txt
 
-  # Combine the per-variant numbers into one table in the job summary.
-  compare:
-    needs: benchmark
+  # Multi-target variant — CBOR_SPLIT_LIBS x mold (M1~M4).
+  multi-target:
+    needs: plan
+    if: needs.plan.outputs.run_multi == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        cell: ${{ fromJSON(needs.plan.outputs.multi) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Measure ${{ matrix.cell }}
+        run: ./bench/summarize-cell.sh "${{ matrix.cell }}" "${{ inputs.runs }}" full
+      - uses: actions/upload-artifact@v4
+        with:
+          name: result-${{ matrix.cell }}
+          path: bench/results/${{ matrix.cell }}.txt
+
+  # Cache-backend variant — same-job cold+warm for C1~C3. The sccache cell's
+  # cold build also populates the GitHub Actions cache for the cache-ephemeral
+  # job below. ghaction-github-runtime exposes the Actions cache token + URL so
+  # sccache can reach the cache from inside the build container.
+  cache-backend:
+    needs: plan
+    if: needs.plan.outputs.run_cache == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        cell: ${{ fromJSON(needs.plan.outputs.cache) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crazy-max/ghaction-github-runtime@v3
+      - name: Measure ${{ matrix.cell }} (same-job cold + warm)
+        run: ./bench/summarize-cell.sh "${{ matrix.cell }}" "${{ inputs.runs }}" full
+      - uses: actions/upload-artifact@v4
+        with:
+          name: result-${{ matrix.cell }}
+          path: bench/results/${{ matrix.cell }}.txt
+
+  # Ephemeral-runner data point — a brand-new runner rebuilds C2/C3. ccache
+  # (C2) is local, so the cache is gone; sccache+gha (C3) shares the GitHub
+  # Actions cache the cache-backend job populated, so it should hit across the
+  # runner boundary.
+  cache-ephemeral:
+    needs: [plan, cache-backend]
+    if: needs.plan.outputs.run_cache == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        cell: [C2, C3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crazy-max/ghaction-github-runtime@v3
+      - name: Fresh-runner build of ${{ matrix.cell }}
+        run: ./bench/summarize-cell.sh "${{ matrix.cell }}" "${{ inputs.runs }}" fresh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: result-${{ matrix.cell }}-fresh
+          path: bench/results/${{ matrix.cell }}-fresh.txt
+
+  # Collect every per-cell result and render the contribution tables into the
+  # job summary. Runs whatever matrices produced results.
+  summary:
+    needs: [plan, core-ablation, multi-target, cache-backend, cache-ephemeral]
+    if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          path: results
+          path: bench/results
+          pattern: result-*
           merge-multiple: true
-      - name: Write benchmark table to the job summary
+      - name: Render the ablation contribution tables
         run: |
           {
-            echo "## build-benchmark — baseline vs optimized"
-            echo ""
-            echo "Runner: \`ubuntu-latest\` (GitHub-hosted). Single measurement"
-            echo "per cell — CI is the regression signal; the README headline"
-            echo "numbers are local 3-run medians (see README)."
-            echo ""
-            echo "| variant | cold build | warm build | image size |"
-            echo "|---|---|---|---|"
-            for f in results/baseline.txt results/optimized.txt; do
-              [ -f "$f" ] || continue
-              # shellcheck disable=SC2046
-              eval $(cat "$f")
-              echo "| $variant | ${cold}s | ${warm}s | ${image_gb} GB |"
-            done
+            echo "## build-benchmark — ablation 측정 결과"
+            echo
+            echo "러너 \`ubuntu-latest\` (GitHub-hosted) · CUDA \`12.2.2\` · N=${{ inputs.runs }} runs/cell · 중앙값 보고."
+            echo
+            if ls bench/results/*.txt >/dev/null 2>&1; then
+              ./bench/contribution-table.sh bench/results
+            else
+              echo "_측정 결과 아티팩트가 없습니다._"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

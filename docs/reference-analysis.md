@@ -180,7 +180,7 @@ C++ 빌드 최적화 3층 멘탈 모델(A 컨테이너 / B 컴파일 / C 이미�
 
 매핑 안 되는 항목 = 레퍼런스에 없거나 본 샘플이 개선하는 부분:
 - **BuildKit cache mount**: Navigation2 Dockerfile엔 없음 → 본 샘플이 추가하는 개선점.
-- **sccache + S3(MinIO)**: 어느 레퍼런스도 안 씀 → ephemeral 러너 간 캐시 공유의 정답, 향후 변형으로 둔다.
+- **sccache + 공유 원격 캐시(GitHub Actions cache)**: 어느 레퍼런스도 안 씀 → ephemeral 러너 간 캐시 공유를 측정하는 변형으로 구현(`docs/measurement-methodology.md` 참조).
 
 ---
 
