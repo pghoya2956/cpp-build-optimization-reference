@@ -1,0 +1,38 @@
+# cpu-contrast-job.yaml — run the SAME image with no GPU, for the contrast.
+#
+# deploy/gpu-verify-job.yaml proves the kernels run on a device. This Job runs
+# the identical image with no GPU attached, so the log shows the other side of
+# the same binary: run_gpu_kernels finds no CUDA device and main.cpp takes the
+# graceful CPU-only path (exit 0). Reading the two Jobs' logs side by side is
+# how "GPU used" and "GPU not used" are told apart.
+#
+# It carries neither `runtimeClassName: nvidia` nor an `nvidia.com/gpu` limit,
+# so the NVIDIA driver is never injected into the container — the CUDA runtime
+# then reports no device wherever the Job happens to be scheduled. No node name
+# or topology is hard-coded.
+#
+#   kubectl apply  -f deploy/cpu-contrast-job.yaml
+#   kubectl wait --for=condition=complete --timeout=120s job/cbor-cpu-contrast
+#   kubectl logs job/cbor-cpu-contrast
+#   kubectl delete job cbor-cpu-contrast
+#
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cbor-cpu-contrast
+  labels:
+    app: cbor-cpu-contrast
+spec:
+  backoffLimit: 0                 # the CPU path should pass on the first run
+  ttlSecondsAfterFinished: 300    # auto-clean 5 min after finishing
+  template:
+    metadata:
+      labels:
+        app: cbor-cpu-contrast
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: cbor
+          # Same image deploy/gpu-verify-job.yaml runs (linux/amd64).
+          image: ghcr.io/pghoya2956/cpp-build-optimization-reference:gpu-verify
+          imagePullPolicy: Always
