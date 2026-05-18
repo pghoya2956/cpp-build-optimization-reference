@@ -73,11 +73,10 @@ COPY bench/measure-build.sh /workspace/bench/measure-build.sh
 
 # layer B — the measured build. measure-build.sh wraps `cmake --build` in date
 # markers and prints LAYER_B_SECONDS=. The ccache cache mount lets a warm build
-# reuse the compiler cache. The GitHub Actions cache token + URL are mounted as
-# secrets (not required): present only for the sccache cache-backend cell.
+# reuse the compiler cache. The full GitHub Actions environment is mounted as
+# one secret (not required): present only for the sccache cache-backend cell.
 RUN --mount=type=cache,target=/ccache \
-    --mount=type=secret,id=actions_runtime_token \
-    --mount=type=secret,id=actions_results_url \
+    --mount=type=secret,id=gha_env \
     bash bench/measure-build.sh
 
 # ---------------------------------------------------------------- runtime ---

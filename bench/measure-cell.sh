@@ -66,20 +66,27 @@ build_args=(
   --build-arg ABL_SPLIT_LIB_COUNT="${CBOR_SPLIT_LIB_COUNT:-16}"
 )
 
-# The sccache cell gets the GitHub Actions cache token + URL as BuildKit secrets
-# — never as build args, so they never bake into an image layer. The workflow's
-# crazy-max/ghaction-github-runtime step exposes ACTIONS_* to the environment.
+# The sccache cell mounts the full GitHub Actions environment as one BuildKit
+# secret file — never as build args, so nothing bakes into an image layer.
+# sccache runs two container layers below the runner (buildx -> cuda image), so
+# opendal's ghac backend needs the whole runner environment — token, both cache
+# URLs, the v2 flag and the GITHUB_* scope — threaded down to it to write. The
+# workflow's crazy-max/ghaction-github-runtime step exposes the ACTIONS_* values.
 secret_args=()
 if [ "$cxx_launcher" = sccache ]; then
   : "${ACTIONS_RUNTIME_TOKEN:?sccache(gha) cell needs ACTIONS_RUNTIME_TOKEN — add the ghaction-github-runtime workflow step}"
-  gha_token="$(mktemp)"; gha_url="$(mktemp)"
-  trap 'rm -f "$gha_token" "$gha_url"' EXIT
-  printf '%s' "$ACTIONS_RUNTIME_TOKEN"                         > "$gha_token"
-  printf '%s' "${ACTIONS_RESULTS_URL:-${ACTIONS_CACHE_URL:-}}" > "$gha_url"
-  secret_args=(
-    --secret "id=actions_runtime_token,src=$gha_token"
-    --secret "id=actions_results_url,src=$gha_url"
-  )
+  gha_env="$(mktemp)"
+  trap 'rm -f "$gha_env"' EXIT
+  {
+    printf 'ACTIONS_RUNTIME_TOKEN=%s\n'    "${ACTIONS_RUNTIME_TOKEN}"
+    printf 'ACTIONS_RESULTS_URL=%s\n'      "${ACTIONS_RESULTS_URL:-}"
+    printf 'ACTIONS_CACHE_URL=%s\n'        "${ACTIONS_CACHE_URL:-}"
+    printf 'ACTIONS_CACHE_SERVICE_V2=%s\n' "${ACTIONS_CACHE_SERVICE_V2:-}"
+    printf 'GITHUB_REPOSITORY=%s\n'        "${GITHUB_REPOSITORY:-}"
+    printf 'GITHUB_REF=%s\n'               "${GITHUB_REF:-}"
+    printf 'GITHUB_RUN_ID=%s\n'            "${GITHUB_RUN_ID:-}"
+  } > "$gha_env"
+  secret_args=( --secret "id=gha_env,src=$gha_env" )
 fi
 
 # A persistent docker-container builder, so the warm build sees the cold build's

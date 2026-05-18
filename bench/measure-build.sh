@@ -13,21 +13,20 @@ set -euo pipefail
 
 BUILD_DIR=build/ablation
 
-# sccache GitHub Actions cache backend — the runtime token + results URL arrive
-# as BuildKit secrets (only the gha cache-backend cell mounts them). Without
-# them sccache falls back to its local disk cache, so non-sccache cells and the
-# local sanity build are unaffected.
-#
-# The cache service v2 (the only one GitHub still serves) needs exactly
-# ACTIONS_RESULTS_URL + ACTIONS_RUNTIME_TOKEN — the legacy ACTIONS_CACHE_URL is
-# not set. sccache >= 0.11 forces v2; older versions only speak the dead
-# legacy endpoint (see docker/Dockerfile.ablation SCCACHE_VERSION).
-if [ -s /run/secrets/actions_runtime_token ]; then
-  export ACTIONS_RUNTIME_TOKEN="$(cat /run/secrets/actions_runtime_token)"
-  export ACTIONS_RESULTS_URL="$(cat /run/secrets/actions_results_url 2>/dev/null || true)"
+# sccache GitHub Actions cache backend — the gha cell mounts the full GitHub
+# Actions environment as one secret file (token, both cache URLs, the v2 flag,
+# the GITHUB_* scope). sccache runs two container layers below the runner, so
+# opendal's ghac backend needs that whole environment threaded down to it to
+# write. Without the secret, sccache uses its local disk cache, so non-sccache
+# cells and the local sanity build are unaffected. sccache >= 0.11 forces the
+# v2 cache service (see docker/Dockerfile.ablation SCCACHE_VERSION).
+if [ -s /run/secrets/gha_env ]; then
+  set -a
+  . /run/secrets/gha_env
+  set +a
   export SCCACHE_GHA_ENABLED="on"
-  # DIAGNOSTIC — surface the sccache server log so cache write errors are
-  # visible. The server picks these up at start (before the first sccache call).
+  # DIAGNOSTIC — surface the sccache server log so cache write errors stay
+  # visible while the gha backend is being stabilised.
   export SCCACHE_LOG="debug"
   export SCCACHE_ERROR_LOG="/tmp/sccache-server.log"
 fi
