@@ -91,24 +91,33 @@ GpuResult run_gpu_kernels(int n, int dim) {
     GpuResult result;
 
     // --- device discovery --------------------------------------------------
-    // cudaGetDeviceCount has two failure modes the log must not conflate: a
-    // clean "no device" (status ok, count 0 — a CPU-only run) versus a CUDA
-    // *error* (driver/runtime mismatch — the historic error 804). The previous
-    // code collapsed both into a single "no device" message; here each prints
-    // its own line so the Job log states exactly why the GPU path did not run.
+    // The log must not conflate two outcomes: a clean "no usable device" (a
+    // CPU-only run — no GPU requested, or no driver in this container) versus
+    // a CUDA *error* on a node that does have a GPU (a driver/runtime mismatch,
+    // the historic error 804). The previous code collapsed both into one "no
+    // device" message; here each prints its own line so the Job log states
+    // exactly why the GPU path did not run.
     int device_count = 0;
     cudaError_t status = cudaGetDeviceCount(&device_count);
-    if (status != cudaSuccess) {
-        std::printf("[gpu] cudaGetDeviceCount failed: %s (error %d) — "
-                    "a CUDA error, not an absent device; the GPU path "
-                    "could not run\n",
-                    cudaGetErrorString(status), static_cast<int>(status));
+
+    // cudaGetDeviceCount signals "nothing to run on" three ways: success with a
+    // zero count, cudaErrorNoDevice, or cudaErrorInsufficientDriver (no driver
+    // injected — the deploy/cpu-contrast-job.yaml case).
+    const bool no_device = (status == cudaSuccess && device_count == 0)
+                        || status == cudaErrorNoDevice
+                        || status == cudaErrorInsufficientDriver;
+    if (no_device) {
+        std::printf("[gpu] no usable CUDA device — CPU-only run, GPU path "
+                    "skipped (cudaGetDeviceCount: %s)\n",
+                    cudaGetErrorString(status));
         result.device_available = false;
         return result;
     }
-    if (device_count == 0) {
-        std::printf("[gpu] no CUDA device present (cudaGetDeviceCount = 0) — "
-                    "CPU-only run, GPU path skipped\n");
+    if (status != cudaSuccess) {
+        std::printf("[gpu] cudaGetDeviceCount failed: %s (error %d) — a CUDA "
+                    "error on a node that has a GPU, not an absent device; "
+                    "the GPU path could not run\n",
+                    cudaGetErrorString(status), static_cast<int>(status));
         result.device_available = false;
         return result;
     }
