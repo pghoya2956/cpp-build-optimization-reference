@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1
+#
+# Dockerfile.cuda-mismatch — an INTENTIONALLY broken runtime image.
+#
+# Identical to Dockerfile.optimized except the final runtime stage is pinned to a
+# CUDA version *newer* than the GPU node's driver supports. The binary builds
+# fine (builder stage unchanged), but at startup the CUDA runtime (12.6) demands
+# a driver that the node (driver 535.x, max CUDA 12.2) cannot satisfy, so it dies
+# with:
+#
+#   RuntimeError: CUDA driver version is insufficient for CUDA runtime version
+#
+# This is a fixture for an agentic deploy-triage demo: a deterministic
+# CrashLoopBackOff whose root cause is a runtime/driver mismatch (fixed by a
+# rollback to the matching image, not by anything in the cluster).
+# The healthy image (Dockerfile.optimized → :gpu-verify) is left untouched.
+
+# ---------------------------------------------------------------- builder ---
+FROM nvidia/cuda:12.2.2-devel-ubuntu22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /workspace
+
+COPY docker/apt-packages.txt /tmp/apt-packages.txt
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+ && apt-get update \
+ && grep -v '^#' /tmp/apt-packages.txt | xargs apt-get install -y --no-install-recommends
+
+ENV CCACHE_DIR=/ccache \
+    CCACHE_BASEDIR=/workspace \
+    CCACHE_COMPILERCHECK=content \
+    CCACHE_SLOPPINESS=time_macros,pch_defines
+
+COPY CMakeLists.txt CMakePresets.json /workspace/
+COPY cmake/ /workspace/cmake/
+COPY src/ /workspace/src/
+
+RUN --mount=type=cache,target=/ccache \
+    cmake --preset optimized \
+ && mold -run cmake --build build/optimized \
+ && ccache --show-stats
+
+# ---------------------------------------------------------------- runtime ---
+# The ONLY difference from Dockerfile.optimized: runtime base is CUDA 12.6, which
+# the node's 535.x driver (CUDA 12.2 ceiling) cannot run -> deterministic crash.
+FROM nvidia/cuda:12.6.2-runtime-ubuntu22.04 AS runtime
+
+WORKDIR /app
+COPY --from=builder /workspace/build/optimized/cbor /app/cbor
+
+CMD ["./cbor"]

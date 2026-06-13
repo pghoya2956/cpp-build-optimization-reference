@@ -41,3 +41,14 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:gpu-verify
             ghcr.io/${{ github.repository }}:latest
+      # Intentionally-broken variant: runtime CUDA 12.6 > GPU node driver ceiling
+      # (12.2) -> deterministic CrashLoopBackOff. Used as a deploy-triage fixture.
+      - name: Build and push the cuda-mismatch image (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.cuda-mismatch
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:cuda-mismatch
